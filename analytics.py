@@ -86,10 +86,70 @@ def clean_data(users, restaurants, riders, orders, events, nps):
 
 
 # ---------------------------------------------------------------------
+# Filtering — drives the dashboard's drill-down filters. Applied to already-
+# cleaned frames; downstream KPI computation runs on whatever subset results,
+# so every metric/chart reflects the current filter selection.
+# ---------------------------------------------------------------------
+def get_filter_options(orders_clean, users_clean, restaurants):
+    """Returns the distinct values available for each filter control."""
+    return {
+        "date_min": orders_clean["order_date"].min(),
+        "date_max": orders_clean["order_date"].max(),
+        "cities": sorted(orders_clean["city"].unique().to_list()),
+        "cuisines": sorted(restaurants["cuisine_type"].unique().to_list()),
+        "channels": sorted(users_clean["acquisition_channel"].unique().to_list()),
+        "devices": sorted(orders_clean["device_type"].unique().to_list()),
+        "ab_groups": sorted(orders_clean["ab_test_group"].unique().to_list()),
+    }
+
+
+def filter_data(users_clean, orders_clean, events_clean, nps_clean, restaurants,
+                 date_range=None, cities=None, cuisines=None, channels=None,
+                 devices=None, ab_groups=None):
+    """Applies the sidebar filter selections and returns a consistent, filtered
+    set of (users, orders, events, nps) — every downstream KPI/chart is
+    recomputed on exactly this subset, giving a real drill-down rather than a
+    cosmetic filter.
+    """
+    orders = orders_clean
+    users = users_clean
+
+    if cuisines:
+        rest_ids = restaurants.filter(pl.col("cuisine_type").is_in(cuisines))["restaurant_id"]
+        orders = orders.filter(pl.col("restaurant_id").is_in(rest_ids))
+    if date_range and len(date_range) == 2:
+        start, end = date_range
+        orders = orders.filter((pl.col("order_date") >= start) & (pl.col("order_date") <= end))
+    if cities:
+        orders = orders.filter(pl.col("city").is_in(cities))
+    if devices:
+        orders = orders.filter(pl.col("device_type").is_in(devices))
+    if ab_groups:
+        orders = orders.filter(pl.col("ab_test_group").is_in(ab_groups))
+    if channels:
+        users = users.filter(pl.col("acquisition_channel").is_in(channels))
+        orders = orders.filter(pl.col("user_id").is_in(users["user_id"]))
+
+    # Keep users/events/nps consistent with whichever users remain in the filtered orders,
+    # so engagement/retention/RFM metrics are computed over the same population.
+    remaining_user_ids = orders["user_id"].unique()
+    users_f = users.filter(pl.col("user_id").is_in(remaining_user_ids))
+    events_f = events_clean.filter(pl.col("user_id").is_in(remaining_user_ids))
+    nps_f = nps_clean.filter(pl.col("user_id").is_in(remaining_user_ids))
+
+    return users_f, orders, events_f, nps_f
+
+
+# ---------------------------------------------------------------------
 # Sections A-K — All KPIs, condensed into one function.
 # Returns (kpi: dict of scalars, charts: dict of supporting DataFrames)
 # ---------------------------------------------------------------------
 def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaurants, riders):
+    if orders_clean.height == 0 or users_clean.height == 0:
+        raise ValueError("No data left after filtering — widen your filter selection.")
+    if orders_clean.filter(pl.col("order_status") == "Delivered").height == 0:
+        raise ValueError("No delivered orders in this filtered slice — widen your filter selection.")
+
     kpi = {}
     charts = {}
 
@@ -143,20 +203,22 @@ def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaur
 
     # ---- C. Conversion & Funnel ----
     funnel_order = ["app_open", "menu_view", "add_to_cart", "checkout_started", "payment_completed"]
-    funnel_counts = (
-        events_clean.group_by("event_name").agg(pl.col("session_id").n_unique().alias("sessions"))
-        .with_columns(pl.col("event_name").cast(pl.Enum(funnel_order))).sort("event_name")
-    )
-    top = funnel_counts["sessions"][0]
+    raw_funnel = events_clean.group_by("event_name").agg(pl.col("session_id").n_unique().alias("sessions"))
+    stage_counts = dict(zip(raw_funnel["event_name"].to_list(), raw_funnel["sessions"].to_list()))
+    funnel_counts = pl.DataFrame({
+        "event_name": funnel_order,
+        "sessions": [stage_counts.get(s, 0) for s in funnel_order],
+    })
+    top = funnel_counts["sessions"][0] or 1  # guard divide-by-zero if even app_open is empty post-filter
     funnel_counts = funnel_counts.with_columns((pl.col("sessions") / top * 100).round(1).alias("conversion_from_top_%"))
     total_sessions = events_clean["session_id"].n_unique()
-    kpi["visitor_to_order_conv"] = orders_clean.height / total_sessions * 100
+    kpi["visitor_to_order_conv"] = (orders_clean.height / total_sessions * 100) if total_sessions else 0.0
 
-    menu_view_sessions = funnel_counts.filter(pl.col("event_name") == "menu_view")["sessions"][0]
-    cart_sessions = funnel_counts.filter(pl.col("event_name") == "add_to_cart")["sessions"][0]
-    kpi["menu_to_cart_rate"] = cart_sessions / menu_view_sessions * 100
-    checkout_sessions = funnel_counts.filter(pl.col("event_name") == "checkout_started")["sessions"][0]
-    kpi["cart_abandonment"] = (1 - checkout_sessions / cart_sessions) * 100
+    menu_view_sessions = stage_counts.get("menu_view", 0)
+    cart_sessions = stage_counts.get("add_to_cart", 0)
+    checkout_sessions = stage_counts.get("checkout_started", 0)
+    kpi["menu_to_cart_rate"] = (cart_sessions / menu_view_sessions * 100) if menu_view_sessions else 0.0
+    kpi["cart_abandonment"] = ((1 - checkout_sessions / cart_sessions) * 100) if cart_sessions else 0.0
 
     total_orders_placed = orders_clean.height
     delivered = orders_clean.filter(pl.col("order_status") == "Delivered")
@@ -183,7 +245,11 @@ def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaur
     kpi["avg_contribution_margin"] = avg_contribution_margin
 
     gmv_trend = delivered.group_by("order_month").agg(pl.col("order_value").sum().alias("gmv")).sort("order_month")
+    gmv_trend_daily = delivered.group_by("order_date").agg(pl.col("order_value").sum().alias("gmv")).sort("order_date")
+    orders_trend_daily = orders_clean.group_by("order_date").agg(pl.len().alias("orders")).sort("order_date")
     charts["gmv_trend"] = gmv_trend
+    charts["gmv_trend_daily"] = gmv_trend_daily
+    charts["orders_trend_daily"] = orders_trend_daily
 
     # ---- E. Retention & Loyalty ----
     oc = orders_clean.join(first_order, on="user_id").with_columns(
@@ -315,21 +381,26 @@ def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaur
         pl.col("order_id").n_unique().alias("frequency"),
         pl.col("order_value").sum().alias("monetary"),
     ])
+    # Guard: qcut needs at least as many rows as bins — narrow filters can leave very few users.
+    n_bins = max(min(5, rfm.height), 1)
+    labels = [str(i) for i in range(1, n_bins + 1)]
     rfm = rfm.with_columns([
-        pl.col("recency_days").rank(descending=True, method="ordinal").qcut(5, labels=["1", "2", "3", "4", "5"]).alias("R_score"),
-        pl.col("frequency").rank(method="ordinal").qcut(5, labels=["1", "2", "3", "4", "5"]).alias("F_score"),
-        pl.col("monetary").rank(method="ordinal").qcut(5, labels=["1", "2", "3", "4", "5"]).alias("M_score"),
+        pl.col("recency_days").rank(descending=True, method="ordinal").qcut(n_bins, labels=labels).alias("R_score"),
+        pl.col("frequency").rank(method="ordinal").qcut(n_bins, labels=labels).alias("F_score"),
+        pl.col("monetary").rank(method="ordinal").qcut(n_bins, labels=labels).alias("M_score"),
     ])
 
-    def label_segment(r, f, m):
-        r, f, m = int(r), int(f), int(m)
-        if r >= 4 and f >= 4:
+    def label_segment(r, f, m, n_bins=n_bins):
+        r, f = int(r), int(f)
+        r_frac = (r - 1) / (n_bins - 1) if n_bins > 1 else 1.0
+        f_frac = (f - 1) / (n_bins - 1) if n_bins > 1 else 1.0
+        if r_frac >= 0.75 and f_frac >= 0.75:
             return "Champions"
-        if r >= 4 and f <= 2:
+        if r_frac >= 0.75 and f_frac <= 0.25:
             return "New / Promising"
-        if r <= 2 and f >= 4:
+        if r_frac <= 0.25 and f_frac >= 0.75:
             return "At Risk (was loyal)"
-        if r <= 2 and f <= 2:
+        if r_frac <= 0.25 and f_frac <= 0.25:
             return "Lost / Hibernating"
         return "Regular"
 
@@ -360,23 +431,29 @@ def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaur
     ])
     control_row = ab.filter(pl.col("ab_test_group") == "Control")
     treat_row = ab.filter(pl.col("ab_test_group") == "Treatment")
-    n1, x1 = control_row["n_orders"][0], control_row["n_delivered"][0]
-    n2, x2 = treat_row["n_orders"][0], treat_row["n_delivered"][0]
-    p1, p2 = x1 / n1, x2 / n2
-    p_pool = (x1 + x2) / (n1 + n2)
-    se = np.sqrt(p_pool * (1 - p_pool) * (1 / n1 + 1 / n2))
-    z = (p2 - p1) / se
-    p_value_completion = 2 * (1 - stats.norm.cdf(abs(z)))
-
     control_aov = delivered.filter(pl.col("ab_test_group") == "Control")["order_value"].to_numpy()
     treat_aov = delivered.filter(pl.col("ab_test_group") == "Treatment")["order_value"].to_numpy()
-    t_stat, p_value_aov = stats.ttest_ind(treat_aov, control_aov, equal_var=False)
 
-    kpi["ab_p1"], kpi["ab_p2"] = p1, p2
-    kpi["ab_p_value_completion"] = p_value_completion
-    kpi["ab_control_aov_mean"] = control_aov.mean()
-    kpi["ab_treat_aov_mean"] = treat_aov.mean()
-    kpi["ab_p_value_aov"] = p_value_aov
+    if control_row.height and treat_row.height and len(control_aov) >= 2 and len(treat_aov) >= 2:
+        n1, x1 = control_row["n_orders"][0], control_row["n_delivered"][0]
+        n2, x2 = treat_row["n_orders"][0], treat_row["n_delivered"][0]
+        p1, p2 = x1 / n1, x2 / n2
+        p_pool = (x1 + x2) / (n1 + n2)
+        se = np.sqrt(p_pool * (1 - p_pool) * (1 / n1 + 1 / n2)) if p_pool not in (0, 1) else 0
+        z = (p2 - p1) / se if se else 0.0
+        p_value_completion = 2 * (1 - stats.norm.cdf(abs(z))) if se else 1.0
+        t_stat, p_value_aov = stats.ttest_ind(treat_aov, control_aov, equal_var=False)
+
+        kpi["ab_available"] = True
+        kpi["ab_p1"], kpi["ab_p2"] = p1, p2
+        kpi["ab_p_value_completion"] = p_value_completion
+        kpi["ab_control_aov_mean"] = control_aov.mean()
+        kpi["ab_treat_aov_mean"] = treat_aov.mean()
+        kpi["ab_p_value_aov"] = p_value_aov
+    else:
+        # Current filter excludes one of the two groups (or leaves too few orders to test) —
+        # the app hides the A/B section rather than showing a broken/misleading comparison.
+        kpi["ab_available"] = False
 
     # ---- Rating distribution (used by dashboard) ----
     rated = delivered.filter(pl.col("rating").is_not_null())

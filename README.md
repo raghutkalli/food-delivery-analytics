@@ -16,4 +16,7 @@ marketplace/supply, CLV modeling, RFM segmentation, cohort analysis, and an
 A/B testing framework) directly from a MySQL database, with a synthetic-data
 fallback so the app always runs even without DB access.
 
-Built with **Streamlit + Polars + Plotly + SciPy**
+Built with **Streamlit + Polars + Plotly + SciPy**.
+
+See `DEPLOYMENT_GUIDE.md` in the parent project for the full walkthrough,
+or the Hugging-Face-specific steps your assistant walked you through in chat.
