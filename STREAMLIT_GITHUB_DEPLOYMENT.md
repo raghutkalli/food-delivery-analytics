@@ -35,9 +35,9 @@ You'll land on your new (empty) repo page.
    - `requirements.txt`
    - `README.md`
    - `.gitignore`
-   - *(Skip `.streamlit/secrets.toml.example` — optional; it's just a reference
-     template, and skipping it changes nothing about deployment. Never upload a
-     real `secrets.toml` with actual credentials.)*
+   - No secrets file needed — the app asks for database credentials directly
+     in its sidebar each session, so there's nothing credential-related to
+     upload or configure in the repo at all.
 3. Scroll down, add a commit message like "Initial dashboard upload," and click
    **"Commit changes"**.
 4. Confirm all files now appear in the repo's file listing.
@@ -85,29 +85,37 @@ That's it for GitHub — your code is hosted. Now connect it to Streamlit.
 At this point, the dashboard is live — running on the **synthetic fallback
 data**, since it doesn't have your DB credentials yet.
 
-### Step 7 — Add your database credentials
-1. From your app's page, click the **"⋮"** menu (top right of your app, or
-   accessible from your Streamlit Cloud workspace list) → **"Settings"**.
-2. Go to the **"Secrets"** tab.
-3. Paste in (with your real values, no quotes needed around the *keys*, but keep them around string values):
-   ```toml
-   DB_HOST = "sql12834948.your-host-provider.com"
-   DB_PORT = 3306
-   DB_NAME = "sql12834948"
-   DB_USER = "your_username"
-   DB_PASSWORD = "your_password"
-   ```
-4. Click **Save**. The app automatically restarts within a few seconds.
-5. Reload the app in your browser — the sidebar should now show
-   **"Data source: Live MySQL database (...)"** instead of the fallback message.
+At this point, the dashboard is live — running on **synthetic data that
+refreshes automatically once every 24 hours** (see Section 2 of this guide),
+since it isn't connected to your live database yet.
+
+### Step 7 — Connect to your live database (no Secrets setup needed)
+As of the current version, the app **no longer uses Streamlit's Secrets
+manager for the database** — instead it asks for your credentials directly
+in the running app, every session, and never stores them:
+1. Open your deployed app.
+2. In the sidebar, expand **"🔌 Connect to database"**.
+3. Enter your `Host`, `Port`, `Database name`, `Username`, `Password`
+   (find these in your phpMyAdmin server/connection details).
+4. Click **"🔗 Connect"**. On success, the sidebar status chip switches to
+   **"Live MySQL · your_database_name"**.
+5. If it fails, you'll see a specific connection error in the sidebar
+   (bad host, wrong password, etc.) rather than a silent fallback — fix the
+   field it points to and click Connect again.
+
+Because this is asked for every session rather than stored, closing the tab
+or letting the page's 24-hour auto-reload happen (Step 8) means you'll need
+to re-enter credentials next time — that's intentional, not a bug.
 
 ### Step 8 — Confirm it's dynamic
-- Open the sidebar and note the **"Last refreshed"** timestamp.
-- Click **"🔄 Refresh data now"** — this clears the cache and re-queries your
-  database immediately, so you can confirm the numbers reflect current DB state.
-- Without clicking anything, the cache also expires automatically every
-  10 minutes (`REFRESH_TTL_SECONDS` in `app.py`), so any visitor loading the
-  page after that window triggers a fresh DB query on their own.
+- The sidebar shows either **"Synthetic (auto-refreshes daily)"** or, once
+  connected, **"Live MySQL · ..."** with the connection time.
+- Click **"🔄 Refresh live data"** (once connected) to re-query the database
+  immediately and confirm the numbers reflect current DB state — or
+  **"🔄 Refresh synthetic data"** when not connected.
+- The whole page also auto-reloads every 24 hours on its own (a `<meta
+  refresh>` tag), which is what drives the daily synthetic-data refresh
+  automatically, without anyone needing to click anything.
 
 ---
 

@@ -6,32 +6,36 @@ on [Streamlit Community Cloud](https://share.streamlit.io) — the standard free
 hosting option for this exact use case (Python + Streamlit apps, public GitHub repos).
 
 ## What "dynamic" means here
-- The app queries your database, computes every KPI fresh, and renders the charts —
+- The app computes every KPI fresh from real data and renders the charts —
   it isn't a pre-baked snapshot.
-- Results are cached for **10 minutes** (`REFRESH_TTL_SECONDS` in `app.py`) so the
-  database isn't hit on every single page view — change that number, or click
-  **"🔄 Refresh data now"** in the sidebar to force an immediate re-pull.
-- If the database is unreachable, the app automatically falls back to the same
-  synthetic dataset used earlier, so the dashboard never shows a broken page.
+- **Live database:** you connect by entering credentials directly in the
+  running app's sidebar (see Step 4) — every session, never stored. Once
+  connected, click **"🔄 Refresh live data"** any time to re-query immediately.
+- **Synthetic fallback:** used automatically whenever you haven't connected
+  to a database. It refreshes itself **once every 24 hours** on its own (the
+  page auto-reloads via a `<meta refresh>` tag, and the synthetic dataset is
+  reseeded by the current date) — no clicking required.
+- Either way, the dashboard never shows a broken page: connection failures
+  show a clear sidebar error and the app keeps running on synthetic data.
 
 ## Files in this folder
 | File | Purpose |
 |---|---|
-| `app.py` | The Streamlit app (UI, layout, charts) |
+| `app.py` | The Streamlit app (UI, layout, charts, DB connection form) |
 | `analytics.py` | Cleaning + all KPI calculations (pure functions, reused from the notebook) |
-| `data_gen.py` | Synthetic-data fallback generator |
+| `data_gen.py` | Synthetic-data fallback generator (date-seeded for the daily refresh) |
 | `db_loader.py` | Live MySQL connection via SQLAlchemy + PyMySQL |
 | `requirements.txt` | Dependencies Streamlit Cloud will install |
-| `.streamlit/secrets.toml.example` | Template for your DB credentials |
 
 ## Step 1 — Put this folder in a GitHub repo
 1. Create a free GitHub account if you don't have one: https://github.com/join
 2. Create a **new repository** (public is fine and free; private also works on the free tier).
 3. Upload all the files in this folder to that repo — keep them at the repo root
-   (or note the subfolder path, you'll need it in Step 3).
+   (or note the subfolder path, you'll need it in Step 2).
    - Easiest: drag-and-drop all files via the GitHub web UI ("Add file" → "Upload files").
-   - Do **not** upload a real `secrets.toml` — only the `.example` file. Credentials
-     go into Streamlit Cloud's own secrets manager (Step 4), not into the repo.
+   - No secrets to worry about here — the app never reads DB credentials from
+     the repo, environment variables, or Streamlit secrets; they're entered
+     live in the app itself (Step 4).
 
 ## Step 2 — Sign up for Streamlit Community Cloud
 1. Go to https://share.streamlit.io and sign in with your GitHub account (free).
@@ -47,23 +51,20 @@ starts the app. First deploy takes 1–3 minutes. You'll get a public URL like:
 https://your-app-name.streamlit.app
 ```
 
-At this point the app is live and working — using the synthetic fallback, since
-it doesn't have your DB credentials yet.
+At this point the app is live and working — using the auto-refreshing
+synthetic data, since you haven't connected to your database yet.
 
-## Step 4 — Add your database credentials (to go fully live)
-1. In your deployed app, click the **⋮ (kebab menu)** → **Settings** → **Secrets**.
-2. Paste in (with your real values):
-   ```toml
-   DB_HOST = "sql12834948.your-host-provider.com"
-   DB_PORT = 3306
-   DB_NAME = "sql12834948"
-   DB_USER = "your_username"
-   DB_PASSWORD = "your_password"
-   ```
-3. Save. The app restarts automatically and now queries your live MySQL database.
+## Step 4 — Connect to your live database
+1. Open your deployed app.
+2. In the sidebar, expand **"🔌 Connect to database"**.
+3. Enter `Host`, `Port`, `Database name`, `Username`, `Password` — find these
+   in your phpMyAdmin "Server" / connection details.
+4. Click **"🔗 Connect"**. The sidebar status chip switches to
+   **"Live MySQL · your_database_name"** on success, or shows a specific
+   error message if the connection fails.
 
-> Find `host`/`port` under your phpMyAdmin "Server" / connection details —
-> the exact hostname isn't visible from the phpMyAdmin URL alone.
+Since credentials are never stored, reloading the page (including the
+automatic 24-hour reload) will ask you to connect again — that's intentional.
 
 ## Keeping it updated
 Any time you push a change to the GitHub repo, Streamlit Cloud **automatically
@@ -83,6 +84,6 @@ lives in `analytics.py` / `app.py`, so edits there show up on next push.
 ## Alternative: Hugging Face Spaces (also free)
 If you'd rather not use GitHub + Streamlit Cloud, [Hugging Face Spaces](https://huggingface.co/spaces)
 supports Streamlit apps natively and is also free — see `HUGGINGFACE_DEPLOYMENT.md`
-in this same folder for the full walkthrough. `app.py` already works unchanged
-on either platform (it checks environment variables first, which is how both
-Hugging Face and Streamlit Cloud expose secrets, with a `st.secrets` fallback).
+in this same folder for the full walkthrough. `app.py` works unchanged on
+either platform — the database connection form works the same way regardless
+of where it's hosted.
