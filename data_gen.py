@@ -6,15 +6,21 @@ import datetime as dt
 import polars as pl
 
 
-def generate_synthetic_data():
-    """Fallback generator: creates the same 6 tables locally when the DB is unreachable."""
+def generate_synthetic_data(seed: int = 42):
+    """Fallback generator: creates the same 6 tables locally when the DB is unreachable.
+
+    `seed` controls the exact data produced — pass a value derived from the
+    current date (e.g. int(datetime.date.today().strftime("%Y%m%d"))) to get
+    a dataset that's stable through a given day but changes on the next,
+    giving a genuine once-a-day data refresh for the synthetic fallback.
+    """
     import random as _random_local
-    _random_local.seed(42)
+    _random_local.seed(seed)
 
     from faker import Faker
 
     fake = Faker("en_IN")
-    Faker.seed(42)
+    Faker.seed(seed)
 
     N_USERS = 800
     N_RESTAURANTS = 120

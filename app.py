@@ -4,7 +4,6 @@ Deploy free on Streamlit Community Cloud (share.streamlit.io) or
 Hugging Face Spaces (huggingface.co/spaces) — this file works unchanged on either.
 """
 import datetime as dt
-import os
 
 import plotly.graph_objects as go
 import polars as pl
@@ -122,59 +121,43 @@ def chart_card(fig, height=380):
 
 
 # ---------------------------------------------------------------------
-# Credentials + data loading
+# Data loading
+#   - Synthetic fallback: cached, reseeded once every 24h so it's stable
+#     within a day and genuinely different the next (real automatic refresh).
+#   - Live DB: never auto-connects using stored secrets — credentials are
+#     always entered by the user in the sidebar form below, for this
+#     session only (never written to disk or persisted anywhere).
 # ---------------------------------------------------------------------
-def _get_db_credentials():
-    """Reads DB credentials from environment variables.
-
-    Both Hugging Face Spaces and Streamlit Community Cloud expose secrets this
-    way: HF natively as env vars, and Streamlit mirrors any *root-level*
-    secrets.toml key (e.g. DB_HOST = "...") to os.environ automatically. Using
-    flat root-level keys (not nested under a [db] section) keeps one code path
-    working unchanged on either host. Falls back to st.secrets directly in
-    case that env-var mirroring behavior ever changes.
-    """
-    if os.environ.get("DB_HOST"):
-        return {
-            "host": os.environ["DB_HOST"], "port": int(os.environ.get("DB_PORT", 3306)),
-            "database": os.environ.get("DB_NAME", ""), "user": os.environ.get("DB_USER", ""),
-            "password": os.environ.get("DB_PASSWORD", ""),
-        }
-    try:
-        return {
-            "host": st.secrets["DB_HOST"], "port": int(st.secrets.get("DB_PORT", 3306)),
-            "database": st.secrets["DB_NAME"], "user": st.secrets["DB_USER"], "password": st.secrets["DB_PASSWORD"],
-        }
-    except Exception:
-        return None
+REFRESH_TTL_SECONDS = 86400  # 24 hours
 
 
 @st.cache_data(ttl=REFRESH_TTL_SECONDS, show_spinner=False)
-def load_data():
-    """Loads + cleans the 6 raw tables. Filtering/KPI computation happens
-    separately (below) so filters can be applied without re-hitting the DB.
-    """
-    creds = _get_db_credentials()
-    try:
-        if not creds:
-            raise ValueError("No DB credentials found in environment variables or st.secrets.")
-        users, restaurants, riders, orders, events, nps = load_from_database(
-            creds["host"], creds["port"], creds["database"], creds["user"], creds["password"]
-        )
-        users = ensure_bool(users, ["is_subscriber"])
-        orders = ensure_bool(orders, ["complaint_flag", "wrong_item_flag", "is_promo_used", "is_scheduled_order"])
-        source = f"Live MySQL · {creds['database']}"
-    except Exception:
-        users, restaurants, riders, orders, events, nps = generate_synthetic_data()
-        source = "Synthetic (fallback)"
+def load_synthetic_data(day_seed: int):
+    users, restaurants, riders, orders, events, nps = generate_synthetic_data(seed=day_seed)
+    return clean_data(users, restaurants, riders, orders, events, nps)
 
-    users_c, orders_c, events_c, nps_c, restaurants_c, riders_c = clean_data(users, restaurants, riders, orders, events, nps)
-    return users_c, orders_c, events_c, nps_c, restaurants_c, riders_c, source, dt.datetime.now()
 
+def _connect_to_database(host, port, database, user, password):
+    users, restaurants, riders, orders, events, nps = load_from_database(host, int(port), database, user, password)
+    users = ensure_bool(users, ["is_subscriber"])
+    orders = ensure_bool(orders, ["complaint_flag", "wrong_item_flag", "is_promo_used", "is_scheduled_order"])
+    return clean_data(users, restaurants, riders, orders, events, nps)
+
+
+# A full browser reload every 24h — combined with the daily-reseeded synthetic
+# cache above, this is what makes the "once every 24 hours" refresh actually
+# happen automatically, without anyone needing to click anything. It also
+# naturally clears any live DB session (session_state resets on a real page
+# reload), which is why the DB form below always asks for credentials again.
+st.markdown(f'<meta http-equiv="refresh" content="{REFRESH_TTL_SECONDS}">', unsafe_allow_html=True)
+
+TODAY_SEED = int(dt.date.today().strftime("%Y%m%d"))
 
 # ---------------------------------------------------------------------
-# Sidebar — branding + filters
+# Sidebar — branding + DB connection + filters
 # ---------------------------------------------------------------------
+FILTER_KEYS = ["flt_date", "flt_city", "flt_cuisine", "flt_channel", "flt_device", "flt_ab"]
+
 with st.sidebar:
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
@@ -185,11 +168,63 @@ with st.sidebar:
     )
     st.divider()
 
-    if st.button("🔄  Refresh data from source", width="stretch"):
-        load_data.clear()
+    st.markdown('<div class="filter-head">🔌 Connect to database</div>', unsafe_allow_html=True)
+    with st.expander("Enter credentials to connect", expanded=not st.session_state.get("db_connected", False)):
+        st.caption("Used only for this browser session — never stored or written to disk. You'll be asked again next time you open the app.")
+        db_host = st.text_input("Host", key="db_host_input", placeholder="sql12834948.host-provider.com")
+        db_port = st.number_input("Port", value=3306, step=1, key="db_port_input")
+        db_name = st.text_input("Database name", key="db_name_input", placeholder="sql12834948")
+        db_user = st.text_input("Username", key="db_user_input")
+        db_password = st.text_input("Password", type="password", key="db_password_input")
+        cc1, cc2 = st.columns(2)
+        connect_clicked = cc1.button("🔗 Connect", width="stretch")
+        disconnect_clicked = cc2.button("✖ Disconnect", width="stretch") if st.session_state.get("db_connected") else False
+
+    if connect_clicked:
+        try:
+            with st.spinner("Connecting to database..."):
+                cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
+            st.session_state["db_data"] = cleaned
+            st.session_state["db_connected"] = True
+            st.session_state["db_connected_at"] = dt.datetime.now()
+            st.session_state["db_label"] = f"Live MySQL · {db_name}"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Connection failed: {type(e).__name__}: {e}")
+
+    if disconnect_clicked:
+        for k in ["db_data", "db_connected", "db_connected_at", "db_label"]:
+            st.session_state.pop(k, None)
         st.rerun()
 
-users_clean, orders_clean, events_clean, nps_clean, restaurants, riders, data_source, last_loaded = load_data()
+    st.divider()
+
+    refresh_label = "🔄  Refresh live data" if st.session_state.get("db_connected") else "🔄  Refresh synthetic data"
+    if st.button(refresh_label, width="stretch"):
+        if st.session_state.get("db_connected"):
+            try:
+                with st.spinner("Refreshing..."):
+                    cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
+                st.session_state["db_data"] = cleaned
+                st.session_state["db_connected_at"] = dt.datetime.now()
+            except Exception as e:
+                st.error(f"Refresh failed: {type(e).__name__}: {e}")
+        else:
+            load_synthetic_data.clear()
+        st.rerun()
+
+# ---------------------------------------------------------------------
+# Resolve active dataset: live DB (this session only) or synthetic fallback
+# ---------------------------------------------------------------------
+if st.session_state.get("db_connected"):
+    users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = st.session_state["db_data"]
+    data_source = st.session_state["db_label"]
+    last_loaded = st.session_state["db_connected_at"]
+else:
+    users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = load_synthetic_data(TODAY_SEED)
+    data_source = "Synthetic (auto-refreshes daily)"
+    last_loaded = dt.datetime.combine(dt.date.today(), dt.time(0, 0))
+
 opts = get_filter_options(orders_clean, users_clean, restaurants)
 
 with st.sidebar:
@@ -198,31 +233,37 @@ with st.sidebar:
         f'<div class="status-chip"><span class="dot" style="background:{dot_color};"></span>{data_source}</div>',
         unsafe_allow_html=True,
     )
-    st.caption(f"Refreshed {last_loaded.strftime('%H:%M:%S')} · auto-refresh every {REFRESH_TTL_SECONDS//60} min")
+    if "Live" in data_source:
+        st.caption(f"Connected {last_loaded.strftime('%H:%M:%S')} · page auto-reloads every {REFRESH_TTL_SECONDS//3600}h (you'll reconnect after that)")
+    else:
+        st.caption(f"Data as of {dt.date.today().isoformat()} · next refresh at midnight (auto page reload every {REFRESH_TTL_SECONDS//3600}h)")
 
     st.markdown('<div class="filter-head">📅 Date range</div>', unsafe_allow_html=True)
     date_range = st.date_input(
         "Date range", value=(opts["date_min"], opts["date_max"]),
         min_value=opts["date_min"], max_value=opts["date_max"], label_visibility="collapsed",
+        key="flt_date",
     )
 
     st.markdown('<div class="filter-head">🏙️ City</div>', unsafe_allow_html=True)
-    f_cities = st.multiselect("City", opts["cities"], default=[], placeholder="All cities", label_visibility="collapsed")
+    f_cities = st.multiselect("City", opts["cities"], default=[], placeholder="All cities", label_visibility="collapsed", key="flt_city")
 
     st.markdown('<div class="filter-head">🍜 Cuisine</div>', unsafe_allow_html=True)
-    f_cuisines = st.multiselect("Cuisine", opts["cuisines"], default=[], placeholder="All cuisines", label_visibility="collapsed")
+    f_cuisines = st.multiselect("Cuisine", opts["cuisines"], default=[], placeholder="All cuisines", label_visibility="collapsed", key="flt_cuisine")
 
     st.markdown('<div class="filter-head">📣 Acquisition channel</div>', unsafe_allow_html=True)
-    f_channels = st.multiselect("Channel", opts["channels"], default=[], placeholder="All channels", label_visibility="collapsed")
+    f_channels = st.multiselect("Channel", opts["channels"], default=[], placeholder="All channels", label_visibility="collapsed", key="flt_channel")
 
     st.markdown('<div class="filter-head">📱 Device</div>', unsafe_allow_html=True)
-    f_devices = st.multiselect("Device", opts["devices"], default=[], placeholder="All devices", label_visibility="collapsed")
+    f_devices = st.multiselect("Device", opts["devices"], default=[], placeholder="All devices", label_visibility="collapsed", key="flt_device")
 
     st.markdown('<div class="filter-head">🧪 A/B test group</div>', unsafe_allow_html=True)
-    f_ab = st.multiselect("A/B group", opts["ab_groups"], default=[], placeholder="Both groups", label_visibility="collapsed")
+    f_ab = st.multiselect("A/B group", opts["ab_groups"], default=[], placeholder="Both groups", label_visibility="collapsed", key="flt_ab")
 
     st.divider()
     if st.button("↺  Reset all filters", width="stretch"):
+        for k in FILTER_KEYS:
+            st.session_state.pop(k, None)
         st.rerun()
 
 # ---------------------------------------------------------------------
