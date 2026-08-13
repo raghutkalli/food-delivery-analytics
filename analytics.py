@@ -28,6 +28,13 @@ def clean_data(users, restaurants, riders, orders, events, nps):
     """Returns (users_clean, orders_clean, events_clean, nps_clean, restaurants, riders)."""
 
     # ---- USERS ----
+    # Defensive: live DB tables may not have these demographic columns yet —
+    # add them as "Unknown" rather than crashing, so the Demographics tab
+    # degrades gracefully instead of breaking the whole app.
+    for demo_col in ["gender", "profession", "income_bracket"]:
+        if demo_col not in users.columns:
+            users = users.with_columns(pl.lit("Unknown").alias(demo_col))
+
     if users.schema["signup_date"] == pl.Utf8:
         signup_expr = (
             pl.col("signup_date").str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
@@ -44,7 +51,18 @@ def clean_data(users, restaurants, riders, orders, events, nps):
             signup_expr,
             pl.col("device_type").fill_null("Unknown"),
             pl.col("age").fill_null(pl.col("age").median()),
+            pl.col("gender").str.strip_chars().str.to_titlecase().fill_null("Unknown"),
+            pl.col("profession").str.strip_chars().str.to_titlecase().fill_null("Unknown"),
+            pl.col("income_bracket").fill_null("Unknown"),
         ])
+        .with_columns(
+            pl.when(pl.col("age") < 25).then(pl.lit("18-24"))
+              .when(pl.col("age") < 35).then(pl.lit("25-34"))
+              .when(pl.col("age") < 45).then(pl.lit("35-44"))
+              .when(pl.col("age") < 55).then(pl.lit("45-54"))
+              .otherwise(pl.lit("55+"))
+              .alias("age_group")
+        )
     )
 
     # ---- ORDERS ----
@@ -100,12 +118,17 @@ def get_filter_options(orders_clean, users_clean, restaurants):
         "channels": sorted(users_clean["acquisition_channel"].unique().to_list()),
         "devices": sorted(orders_clean["device_type"].unique().to_list()),
         "ab_groups": sorted(orders_clean["ab_test_group"].unique().to_list()),
+        "genders": sorted(users_clean["gender"].unique().to_list()),
+        "professions": sorted(users_clean["profession"].unique().to_list()),
+        "income_brackets": sorted(users_clean["income_bracket"].unique().to_list()),
+        "age_groups": sorted(users_clean["age_group"].unique().to_list()),
     }
 
 
 def filter_data(users_clean, orders_clean, events_clean, nps_clean, restaurants,
                  date_range=None, cities=None, cuisines=None, channels=None,
-                 devices=None, ab_groups=None):
+                 devices=None, ab_groups=None, genders=None, professions=None,
+                 income_brackets=None, age_groups=None):
     """Applies the sidebar filter selections and returns a consistent, filtered
     set of (users, orders, events, nps) — every downstream KPI/chart is
     recomputed on exactly this subset, giving a real drill-down rather than a
@@ -126,8 +149,20 @@ def filter_data(users_clean, orders_clean, events_clean, nps_clean, restaurants,
         orders = orders.filter(pl.col("device_type").is_in(devices))
     if ab_groups:
         orders = orders.filter(pl.col("ab_test_group").is_in(ab_groups))
+
+    # Demographic filters are user-attributes -> filter users first, then
+    # cascade to orders so every downstream metric stays consistent.
     if channels:
         users = users.filter(pl.col("acquisition_channel").is_in(channels))
+    if genders:
+        users = users.filter(pl.col("gender").is_in(genders))
+    if professions:
+        users = users.filter(pl.col("profession").is_in(professions))
+    if income_brackets:
+        users = users.filter(pl.col("income_bracket").is_in(income_brackets))
+    if age_groups:
+        users = users.filter(pl.col("age_group").is_in(age_groups))
+    if channels or genders or professions or income_brackets or age_groups:
         orders = orders.filter(pl.col("user_id").is_in(users["user_id"]))
 
     # Keep users/events/nps consistent with whichever users remain in the filtered orders,
@@ -459,5 +494,48 @@ def compute_all_kpis(users_clean, orders_clean, events_clean, nps_clean, restaur
     rated = delivered.filter(pl.col("rating").is_not_null())
     rating_dist = rated.group_by("rating").agg(pl.len().alias("count")).sort("rating")
     charts["rating_dist"] = rating_dist
+
+    # ---- Demographic Segmentation: gender, age, profession, income ----
+    demo_dims = ["gender", "age_group", "profession", "income_bracket"]
+    demo_breakdown = {}
+    for dim in demo_dims:
+        d = (
+            delivered.join(users_clean.select(["user_id", dim]), on="user_id")
+            .group_by(dim)
+            .agg([
+                pl.col("user_id").n_unique().alias("users"),
+                pl.len().alias("orders"),
+                pl.col("order_value").sum().alias("gmv"),
+                pl.col("order_value").mean().round(2).alias("aov"),
+            ])
+            .sort("gmv", descending=True)
+        )
+        demo_breakdown[dim] = d
+    charts["demo_breakdown"] = demo_breakdown
+
+    # Two-factor cut: Gender x Age Group GMV matrix — genuine multi-factor
+    # segmentation, not just single-dimension bars.
+    AGE_ORDER = ["18-24", "25-34", "35-44", "45-54", "55+", "Unknown"]
+    cross = (
+        delivered.join(users_clean.select(["user_id", "gender", "age_group"]), on="user_id")
+        .group_by(["gender", "age_group"]).agg(pl.col("order_value").sum().alias("gmv"))
+    )
+    cross_pivot = cross.pivot(values="gmv", index="gender", on="age_group").fill_null(0)
+    present_age_cols = [c for c in AGE_ORDER if c in cross_pivot.columns]
+    cross_pivot = cross_pivot.select(["gender"] + present_age_cols)
+    charts["gender_age_cross"] = cross_pivot
+
+    # Raw user counts by dimension (for "who signs up" vs. "who spends" comparison)
+    charts["users_by_gender"] = users_clean.group_by("gender").agg(pl.len().alias("users")).sort("users", descending=True)
+    charts["users_by_profession"] = users_clean.group_by("profession").agg(pl.len().alias("users")).sort("users", descending=True)
+    charts["users_by_income"] = users_clean.group_by("income_bracket").agg(pl.len().alias("users")).sort("users", descending=True)
+
+    # Headline demographic KPIs
+    for dim, kpi_prefix in [("gender", "top_gender"), ("profession", "top_profession"),
+                             ("income_bracket", "top_income"), ("age_group", "top_age_group")]:
+        if demo_breakdown[dim].height:
+            top_row = demo_breakdown[dim].row(0, named=True)  # already sorted by gmv desc
+            kpi[kpi_prefix] = top_row[dim]
+            kpi[f"{kpi_prefix}_gmv_share"] = (top_row["gmv"] / gmv * 100) if gmv else 0.0
 
     return kpi, charts
