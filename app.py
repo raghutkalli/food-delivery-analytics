@@ -4,6 +4,7 @@ Deploy free on Streamlit Community Cloud (share.streamlit.io) or
 Hugging Face Spaces (huggingface.co/spaces) — this file works unchanged on either.
 """
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 import plotly.graph_objects as go
 import polars as pl
@@ -16,7 +17,18 @@ from db_loader import ensure_bool, load_from_database
 
 st.set_page_config(page_title="Food Delivery Analytics", layout="wide", page_icon="🍔", initial_sidebar_state="expanded")
 
-REFRESH_TTL_SECONDS = 600  # data is re-pulled from the DB at most every 10 minutes
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> dt.datetime:
+    """Server clocks (Streamlit Cloud / HF Spaces) run in UTC — always go
+    through this instead of dt.datetime.now() so every timestamp shown in
+    the app is genuinely IST, not server-local time mislabeled as IST."""
+    return dt.datetime.now(IST)
+
+
+def today_ist() -> dt.date:
+    return now_ist().date()
 
 # ---------------------------------------------------------------------
 # Design tokens — one place to tweak the look
@@ -151,12 +163,13 @@ def _connect_to_database(host, port, database, user, password):
 # reload), which is why the DB form below always asks for credentials again.
 st.markdown(f'<meta http-equiv="refresh" content="{REFRESH_TTL_SECONDS}">', unsafe_allow_html=True)
 
-TODAY_SEED = int(dt.date.today().strftime("%Y%m%d"))
+TODAY_SEED = int(today_ist().strftime("%Y%m%d"))
 
 # ---------------------------------------------------------------------
 # Sidebar — branding + DB connection + filters
 # ---------------------------------------------------------------------
-FILTER_KEYS = ["flt_date", "flt_city", "flt_cuisine", "flt_channel", "flt_device", "flt_ab"]
+FILTER_KEYS = ["flt_date", "flt_city", "flt_cuisine", "flt_channel", "flt_device", "flt_ab",
+               "flt_gender", "flt_profession", "flt_income", "flt_agegroup"]
 
 with st.sidebar:
     st.markdown(
@@ -186,7 +199,7 @@ with st.sidebar:
                 cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
             st.session_state["db_data"] = cleaned
             st.session_state["db_connected"] = True
-            st.session_state["db_connected_at"] = dt.datetime.now()
+            st.session_state["db_connected_at"] = now_ist()
             st.session_state["db_label"] = f"Live MySQL · {db_name}"
             st.rerun()
         except Exception as e:
@@ -206,7 +219,7 @@ with st.sidebar:
                 with st.spinner("Refreshing..."):
                     cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
                 st.session_state["db_data"] = cleaned
-                st.session_state["db_connected_at"] = dt.datetime.now()
+                st.session_state["db_connected_at"] = now_ist()
             except Exception as e:
                 st.error(f"Refresh failed: {type(e).__name__}: {e}")
         else:
@@ -223,7 +236,7 @@ if st.session_state.get("db_connected"):
 else:
     users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = load_synthetic_data(TODAY_SEED)
     data_source = "Synthetic (auto-refreshes daily)"
-    last_loaded = dt.datetime.combine(dt.date.today(), dt.time(0, 0))
+    last_loaded = dt.datetime.combine(today_ist(), dt.time(0, 0), tzinfo=IST)
 
 opts = get_filter_options(orders_clean, users_clean, restaurants)
 
@@ -234,9 +247,9 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     if "Live" in data_source:
-        st.caption(f"Connected {last_loaded.strftime('%H:%M:%S')} · page auto-reloads every {REFRESH_TTL_SECONDS//3600}h (you'll reconnect after that)")
+        st.caption(f"Connected {last_loaded.strftime('%H:%M:%S')} IST · page auto-reloads every {REFRESH_TTL_SECONDS//3600}h (you'll reconnect after that)")
     else:
-        st.caption(f"Data as of {dt.date.today().isoformat()} · next refresh at midnight (auto page reload every {REFRESH_TTL_SECONDS//3600}h)")
+        st.caption(f"Data as of {today_ist().isoformat()} IST · next refresh at midnight IST (auto page reload every {REFRESH_TTL_SECONDS//3600}h)")
 
     st.markdown('<div class="filter-head">📅 Date range</div>', unsafe_allow_html=True)
     date_range = st.date_input(
@@ -260,6 +273,12 @@ with st.sidebar:
     st.markdown('<div class="filter-head">🧪 A/B test group</div>', unsafe_allow_html=True)
     f_ab = st.multiselect("A/B group", opts["ab_groups"], default=[], placeholder="Both groups", label_visibility="collapsed", key="flt_ab")
 
+    st.markdown('<div class="filter-head">🧑 Demographics</div>', unsafe_allow_html=True)
+    f_gender = st.multiselect("Gender", opts["genders"], default=[], placeholder="All genders", label_visibility="collapsed", key="flt_gender")
+    f_profession = st.multiselect("Profession", opts["professions"], default=[], placeholder="All professions", label_visibility="collapsed", key="flt_profession")
+    f_income = st.multiselect("Income bracket", opts["income_brackets"], default=[], placeholder="All income brackets", label_visibility="collapsed", key="flt_income")
+    f_agegroup = st.multiselect("Age group", opts["age_groups"], default=[], placeholder="All age groups", label_visibility="collapsed", key="flt_agegroup")
+
     st.divider()
     if st.button("↺  Reset all filters", width="stretch"):
         for k in FILTER_KEYS:
@@ -274,9 +293,12 @@ uf, of, ef, nf = filter_data(
     users_clean, orders_clean, events_clean, nps_clean, restaurants,
     date_range=date_range_arg, cities=f_cities or None, cuisines=f_cuisines or None,
     channels=f_channels or None, devices=f_devices or None, ab_groups=f_ab or None,
+    genders=f_gender or None, professions=f_profession or None,
+    income_brackets=f_income or None, age_groups=f_agegroup or None,
 )
 
-filters_active = any([f_cities, f_cuisines, f_channels, f_devices, f_ab, date_range_arg != (opts["date_min"], opts["date_max"])])
+filters_active = any([f_cities, f_cuisines, f_channels, f_devices, f_ab, f_gender, f_profession,
+                       f_income, f_agegroup, date_range_arg != (opts["date_min"], opts["date_max"])])
 
 try:
     kpi, charts = compute_all_kpis(uf, of, ef, nf, restaurants, riders)
@@ -296,7 +318,7 @@ with h2:
     st.markdown(
         f'<div style="text-align:right;padding-top:8px;">'
         f'<span class="status-chip"><span class="dot" style="background:{PALETTE["primary"]};"></span>'
-        f'{last_loaded.strftime("%b %d, %H:%M")}</span></div>',
+        f'{last_loaded.strftime("%b %d, %H:%M")} IST</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -310,9 +332,9 @@ if filters_active:
 # ---------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------
-tab_overview, tab_acq, tab_rev, tab_retention, tab_ops, tab_market, tab_product, tab_ab = st.tabs(
+tab_overview, tab_acq, tab_rev, tab_retention, tab_ops, tab_market, tab_product, tab_demo, tab_ab = st.tabs(
     ["📈 Overview", "🎯 Acquisition & Engagement", "💰 Revenue", "🔁 Retention & Loyalty",
-     "🚚 Operations", "🏬 Marketplace", "🧩 Product & Segments", "🧪 A/B Testing"]
+     "🚚 Operations", "🏬 Marketplace", "🧩 Product & Segments", "🧑 Demographics", "🧪 A/B Testing"]
 )
 
 # ===================== OVERVIEW =====================
@@ -497,6 +519,78 @@ with tab_product:
                             marker=dict(colors=CHART_COLORWAY)))
     with st.container(border=True):
         chart_card(fig, height=380)
+
+# ===================== DEMOGRAPHICS =====================
+with tab_demo:
+    section_head("Demographic Segmentation", PALETTE["rose"])
+
+    demo = charts["demo_breakdown"]
+    kpi_grid([
+        ("Top Gender by GMV", f"{kpi.get('top_gender','—')} ({kpi.get('top_gender_gmv_share',0):.1f}%)"),
+        ("Top Age Group by GMV", f"{kpi.get('top_age_group','—')} ({kpi.get('top_age_group_gmv_share',0):.1f}%)"),
+        ("Top Profession by GMV", f"{kpi.get('top_profession','—')} ({kpi.get('top_profession_gmv_share',0):.1f}%)"),
+        ("Top Income Bracket by GMV", f"{kpi.get('top_income','—')} ({kpi.get('top_income_gmv_share',0):.1f}%)"),
+    ], PALETTE["rose"])
+
+    demo_dim_labels = {"gender": "Gender", "age_group": "Age Group", "profession": "Profession", "income_bracket": "Income Bracket"}
+    demo_choice = st.radio("Segment by", list(demo_dim_labels.values()), horizontal=True, key="demo_dim_choice")
+    dim_key = [k for k, v in demo_dim_labels.items() if v == demo_choice][0]
+    d = demo[dim_key]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = go.Figure(go.Bar(x=d[dim_key], y=d["gmv"], marker_color=PALETTE["rose"],
+                                text=[f"{v/d['gmv'].sum()*100:.1f}%" for v in d["gmv"]], textposition="outside"))
+        fig.update_layout(title=f"GMV by {demo_choice}")
+        with st.container(border=True):
+            chart_card(fig, height=380)
+    with c2:
+        fig = go.Figure(go.Bar(x=d[dim_key], y=d["aov"], marker_color=PALETTE["amber"]))
+        fig.update_layout(title=f"AOV by {demo_choice}")
+        with st.container(border=True):
+            chart_card(fig, height=380)
+
+    c3, c4 = st.columns(2)
+    with c3:
+        fig = go.Figure(go.Bar(x=d[dim_key], y=d["users"], marker_color=PALETTE["sky"]))
+        fig.update_layout(title=f"Active Users by {demo_choice}")
+        with st.container(border=True):
+            chart_card(fig, height=350)
+    with c4:
+        ub_key = {"gender": "users_by_gender", "profession": "users_by_profession", "income_bracket": "users_by_income"}
+        if dim_key in ub_key:
+            ub = charts[ub_key[dim_key]]
+            fig = go.Figure(go.Pie(labels=ub[dim_key].to_list(), values=ub["users"].to_list(), hole=0.5,
+                                    marker=dict(colors=CHART_COLORWAY)))
+            fig.update_layout(title=f"All Signed-Up Users by {demo_choice} (not just spenders)")
+            with st.container(border=True):
+                chart_card(fig, height=350)
+        else:
+            fig = go.Figure(go.Pie(labels=d[dim_key].to_list(), values=d["users"].to_list(), hole=0.5,
+                                    marker=dict(colors=CHART_COLORWAY)))
+            fig.update_layout(title=f"Active Users by {demo_choice}")
+            with st.container(border=True):
+                chart_card(fig, height=350)
+
+    section_head("Gender × Age Group — GMV Cross-Tab", PALETTE["violet"])
+    cross = charts["gender_age_cross"]
+    age_cols = [c for c in cross.columns if c != "gender"]
+    fig = go.Figure(go.Heatmap(
+        z=cross.select(age_cols).to_numpy(), x=age_cols, y=cross["gender"].to_list(),
+        colorscale=[[0, "#F1F5F9"], [1, PALETTE["violet"]]], colorbar=dict(title="GMV"),
+        text=cross.select(age_cols).to_numpy(), texttemplate="%{text:,.0f}",
+    ))
+    fig.update_layout(xaxis_title="Age Group", yaxis_title="Gender")
+    with st.container(border=True):
+        chart_card(fig, height=340)
+
+    if (users_clean["gender"] == "Unknown").mean() > 0.5 or (users_clean["profession"] == "Unknown").mean() > 0.5:
+        st.markdown(
+            '<div class="info-note">ℹ️ Most users show "Unknown" for gender/profession — this usually means '
+            'your live database doesn\'t have these columns yet. The dashboard still runs fine; connect a '
+            'source with this data to see real segmentation here.</div>',
+            unsafe_allow_html=True,
+        )
 
 # ===================== A/B TESTING =====================
 with tab_ab:

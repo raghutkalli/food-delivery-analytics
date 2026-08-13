@@ -38,6 +38,29 @@ def generate_synthetic_data(seed: int = 42):
     PAYMENT_METHODS = ["UPI", "Credit Card", "Debit Card", "Wallet", "Cash on Delivery", "Net Banking"]
     CANCEL_REASONS = ["Restaurant too busy", "Customer changed mind", "Payment failed",
                        "Item unavailable", "Delivery partner unavailable", "Long wait time", None]
+    GENDERS = ["Male", "Female", "Other"]
+    PROFESSIONS = ["Student", "Salaried Employee", "Self-Employed", "Business Owner", "Homemaker", "Retired"]
+    INCOME_BRACKETS = ["Low (<3L)", "Mid (3-8L)", "High (8-15L)", "Premium (15L+)"]
+
+    def pick_profession(age):
+        # Loosely age-correlated so the demographic cuts look realistic, not random noise
+        if age <= 22:
+            return random.choices(PROFESSIONS, weights=[55, 20, 10, 5, 8, 2])[0]
+        elif age <= 30:
+            return random.choices(PROFESSIONS, weights=[5, 50, 20, 10, 10, 5])[0]
+        elif age <= 45:
+            return random.choices(PROFESSIONS, weights=[1, 40, 25, 20, 12, 2])[0]
+        else:
+            return random.choices(PROFESSIONS, weights=[0, 25, 20, 25, 15, 15])[0]
+
+    def pick_income(profession):
+        # Loosely profession-correlated income bracket
+        weights_by_profession = {
+            "Student": [70, 25, 4, 1], "Homemaker": [40, 40, 15, 5], "Retired": [30, 40, 20, 10],
+            "Salaried Employee": [10, 45, 35, 10], "Self-Employed": [15, 35, 30, 20],
+            "Business Owner": [5, 20, 35, 40],
+        }
+        return random.choices(INCOME_BRACKETS, weights=weights_by_profession[profession])[0]
 
     def random_date(start=START_DATE, days_range=DAYS_RANGE):
         return start + dt.timedelta(days=random.randint(0, days_range))
@@ -50,8 +73,13 @@ def generate_synthetic_data(seed: int = 42):
         city = random.choice(CITIES)
         device = random.choice(DEVICES)
         age = random.randint(18, 55)
+        profession = pick_profession(age)
+        income_bracket = pick_income(profession)
+        gender = random.choices(GENDERS, weights=[48, 48, 4])[0]
         city_dirty = city.upper() if random.random() < 0.1 else (f" {city} " if random.random() < 0.1 else city)
         device_dirty = device if random.random() > 0.05 else None
+        gender_dirty = gender.lower() if random.random() < 0.08 else (None if random.random() < 0.02 else gender)
+        profession_dirty = profession.lower() if random.random() < 0.08 else (None if random.random() < 0.02 else profession)
         users.append({
             "user_id": f"U{uid:05d}",
             "user_name": fake.name(),
@@ -60,6 +88,9 @@ def generate_synthetic_data(seed: int = 42):
             "city": city_dirty,
             "device_type": device_dirty,
             "age": age if random.random() > 0.02 else None,
+            "gender": gender_dirty,
+            "profession": profession_dirty,
+            "income_bracket": income_bracket,
             "is_subscriber": random.random() < 0.22,   # membership/subscription feature flag (Feature Adoption)
             "ab_test_group": random.choice(["Control", "Treatment"]),  # Checkout-Redesign A/B test assignment
         })
