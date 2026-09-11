@@ -101,7 +101,23 @@ html, body, [class*="css"] {{ font-family: 'Inter', -apple-system, sans-serif; }
 
 /* ---- Sidebar ---- */
 section[data-testid="stSidebar"] {{ border-right: 1px solid {PALETTE['border']}; }}
+section[data-testid="stSidebar"] .block-container {{ padding-top: 1rem; padding-bottom: 1rem; }}
 .filter-head {{ font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:{PALETTE['muted']}; margin: 14px 0 4px 0; }}
+.mini-label {{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:{PALETTE['muted']}; margin: 2px 0 1px 0; }}
+
+/* Compact widget spacing inside the sidebar only — keeps everything on one screen */
+section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {{ gap: 0.3rem; }}
+section[data-testid="stSidebar"] hr {{ margin: 0.4rem 0; }}
+section[data-testid="stSidebar"] .stButton button {{ padding-top: 0.25rem; padding-bottom: 0.25rem; font-size: 12.5px; }}
+section[data-testid="stSidebar"] [data-testid="stExpander"] {{ margin-bottom: 0.2rem; }}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {{ padding: 0.4rem 0.6rem; font-size: 12.5px; }}
+section[data-testid="stSidebar"] .stCaption {{ font-size: 10.5px; line-height:1.3; }}
+/* Streamlit's collapsed-label widgets carry a built-in negative top margin
+   (compensation for their own hidden label) that collides with our mini-label
+   divs placed just above them — push them back down to clear it. */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"],
+section[data-testid="stSidebar"] [data-testid="stDateInput"] {{ margin-top: 10px; }}
+section[data-testid="stSidebar"] [data-testid="stExpander"] {{ margin-top: 4px; }}
 
 .chart-card {{ background:{PALETTE['card']}; border:1px solid {PALETTE['border']}; border-radius:16px; padding: 6px 10px 2px 10px; margin-bottom:18px; box-shadow: 0 1px 3px rgba(15,23,42,0.04); }}
 .info-note {{ font-size:12.5px; color:{PALETTE['muted']}; background:#F1F5F9; border-radius:10px; padding:10px 14px; margin: 4px 0 18px 0; }}
@@ -115,6 +131,10 @@ def section_head(title: str, color: str):
         f'<div class="section-head"><div class="bar" style="background:{color};"></div><h3>{title}</h3></div>',
         unsafe_allow_html=True,
     )
+
+
+def mini_label(text: str):
+    st.markdown(f'<div class="mini-label">{text}</div>', unsafe_allow_html=True)
 
 
 def kpi_grid(items, accent):
@@ -173,29 +193,29 @@ FILTER_KEYS = ["flt_date", "flt_city", "flt_cuisine", "flt_channel", "flt_device
 
 with st.sidebar:
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
-        f'<div style="font-size:28px;">🍔</div>'
-        f'<div><div style="font-weight:800;font-size:16px;color:{PALETTE["text"]};">FoodFlow Analytics</div>'
-        f'<div style="font-size:11.5px;color:{PALETTE["muted"]};">Product KPI Dashboard</div></div></div>',
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
+        f'<div style="font-size:22px;">🍔</div>'
+        f'<div><div style="font-weight:800;font-size:14px;color:{PALETTE["text"]};line-height:1.2;">FoodFlow Analytics</div>'
+        f'<div style="font-size:10.5px;color:{PALETTE["muted"]};">Product KPI Dashboard</div></div></div>',
         unsafe_allow_html=True,
     )
-    st.divider()
 
-    st.markdown('<div class="filter-head">🔌 Connect to database</div>', unsafe_allow_html=True)
-    with st.expander("Enter credentials to connect", expanded=not st.session_state.get("db_connected", False)):
-        st.caption("Used only for this browser session — never stored or written to disk. You'll be asked again next time you open the app.")
-        db_host = st.text_input("Host", key="db_host_input", placeholder="sql12834948.host-provider.com")
-        db_port = st.number_input("Port", value=3306, step=1, key="db_port_input")
-        db_name = st.text_input("Database name", key="db_name_input", placeholder="sql12834948")
-        db_user = st.text_input("Username", key="db_user_input")
-        db_password = st.text_input("Password", type="password", key="db_password_input")
+    with st.expander("🔌 Database connection", expanded=False):
+        st.caption("Used only for this session — never stored.")
+        r1c1, r1c2 = st.columns([3, 1])
+        db_host = r1c1.text_input("Host", key="db_host_input", placeholder="host.provider.com", label_visibility="collapsed")
+        db_port = r1c2.number_input("Port", value=3306, step=1, key="db_port_input", label_visibility="collapsed")
+        db_name = st.text_input("Database name", key="db_name_input", placeholder="Database name", label_visibility="collapsed")
+        r2c1, r2c2 = st.columns(2)
+        db_user = r2c1.text_input("Username", key="db_user_input", placeholder="Username", label_visibility="collapsed")
+        db_password = r2c2.text_input("Password", type="password", key="db_password_input", placeholder="Password", label_visibility="collapsed")
         cc1, cc2 = st.columns(2)
         connect_clicked = cc1.button("🔗 Connect", width="stretch")
         disconnect_clicked = cc2.button("✖ Disconnect", width="stretch") if st.session_state.get("db_connected") else False
 
     if connect_clicked:
         try:
-            with st.spinner("Connecting to database..."):
+            with st.spinner("Connecting..."):
                 cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
             st.session_state["db_data"] = cleaned
             st.session_state["db_connected"] = True
@@ -210,9 +230,7 @@ with st.sidebar:
             st.session_state.pop(k, None)
         st.rerun()
 
-    st.divider()
-
-    refresh_label = "🔄  Refresh live data" if st.session_state.get("db_connected") else "🔄  Refresh synthetic data"
+    refresh_label = "🔄 Refresh live data" if st.session_state.get("db_connected") else "🔄 Refresh synthetic data"
     if st.button(refresh_label, width="stretch"):
         if st.session_state.get("db_connected"):
             try:
@@ -246,41 +264,54 @@ with st.sidebar:
         f'<div class="status-chip"><span class="dot" style="background:{dot_color};"></span>{data_source}</div>',
         unsafe_allow_html=True,
     )
-    if "Live" in data_source:
-        st.caption(f"Connected {last_loaded.strftime('%H:%M:%S')} IST · page auto-reloads every {REFRESH_TTL_SECONDS//3600}h (you'll reconnect after that)")
-    else:
-        st.caption(f"Data as of {today_ist().isoformat()} IST · next refresh at midnight IST (auto page reload every {REFRESH_TTL_SECONDS//3600}h)")
+    short_time = last_loaded.strftime('%H:%M IST') if "Live" in data_source else f"as of {today_ist().strftime('%d %b')} IST"
+    st.caption(f"🕐 {short_time} · refreshes every {REFRESH_TTL_SECONDS//3600}h")
 
-    st.markdown('<div class="filter-head">📅 Date range</div>', unsafe_allow_html=True)
+    st.markdown('<div class="filter-head" style="margin-top:8px;">🔍 Filters</div>', unsafe_allow_html=True)
+
+    mini_label("📅 Date range")
     date_range = st.date_input(
         "Date range", value=(opts["date_min"], opts["date_max"]),
         min_value=opts["date_min"], max_value=opts["date_max"], label_visibility="collapsed",
         key="flt_date",
     )
 
-    st.markdown('<div class="filter-head">🏙️ City</div>', unsafe_allow_html=True)
-    f_cities = st.multiselect("City", opts["cities"], default=[], placeholder="All cities", label_visibility="collapsed", key="flt_city")
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        mini_label("🏙️ City")
+        f_cities = st.multiselect("City", opts["cities"], default=[], placeholder="All", label_visibility="collapsed", key="flt_city")
+    with fc2:
+        mini_label("🍜 Cuisine")
+        f_cuisines = st.multiselect("Cuisine", opts["cuisines"], default=[], placeholder="All", label_visibility="collapsed", key="flt_cuisine")
 
-    st.markdown('<div class="filter-head">🍜 Cuisine</div>', unsafe_allow_html=True)
-    f_cuisines = st.multiselect("Cuisine", opts["cuisines"], default=[], placeholder="All cuisines", label_visibility="collapsed", key="flt_cuisine")
+    fc3, fc4 = st.columns(2)
+    with fc3:
+        mini_label("📣 Channel")
+        f_channels = st.multiselect("Channel", opts["channels"], default=[], placeholder="All", label_visibility="collapsed", key="flt_channel")
+    with fc4:
+        mini_label("📱 Device")
+        f_devices = st.multiselect("Device", opts["devices"], default=[], placeholder="All", label_visibility="collapsed", key="flt_device")
 
-    st.markdown('<div class="filter-head">📣 Acquisition channel</div>', unsafe_allow_html=True)
-    f_channels = st.multiselect("Channel", opts["channels"], default=[], placeholder="All channels", label_visibility="collapsed", key="flt_channel")
+    fc5, fc6 = st.columns(2)
+    with fc5:
+        mini_label("🧪 A/B group")
+        f_ab = st.multiselect("A/B group", opts["ab_groups"], default=[], placeholder="Both", label_visibility="collapsed", key="flt_ab")
+    with fc6:
+        mini_label("🚻 Gender")
+        f_gender = st.multiselect("Gender", opts["genders"], default=[], placeholder="All", label_visibility="collapsed", key="flt_gender")
 
-    st.markdown('<div class="filter-head">📱 Device</div>', unsafe_allow_html=True)
-    f_devices = st.multiselect("Device", opts["devices"], default=[], placeholder="All devices", label_visibility="collapsed", key="flt_device")
+    fc7, fc8 = st.columns(2)
+    with fc7:
+        mini_label("💼 Profession")
+        f_profession = st.multiselect("Profession", opts["professions"], default=[], placeholder="All", label_visibility="collapsed", key="flt_profession")
+    with fc8:
+        mini_label("💰 Income")
+        f_income = st.multiselect("Income", opts["income_brackets"], default=[], placeholder="All", label_visibility="collapsed", key="flt_income")
 
-    st.markdown('<div class="filter-head">🧪 A/B test group</div>', unsafe_allow_html=True)
-    f_ab = st.multiselect("A/B group", opts["ab_groups"], default=[], placeholder="Both groups", label_visibility="collapsed", key="flt_ab")
-
-    st.markdown('<div class="filter-head">🧑 Demographics</div>', unsafe_allow_html=True)
-    f_gender = st.multiselect("Gender", opts["genders"], default=[], placeholder="All genders", label_visibility="collapsed", key="flt_gender")
-    f_profession = st.multiselect("Profession", opts["professions"], default=[], placeholder="All professions", label_visibility="collapsed", key="flt_profession")
-    f_income = st.multiselect("Income bracket", opts["income_brackets"], default=[], placeholder="All income brackets", label_visibility="collapsed", key="flt_income")
+    mini_label("🎂 Age group")
     f_agegroup = st.multiselect("Age group", opts["age_groups"], default=[], placeholder="All age groups", label_visibility="collapsed", key="flt_agegroup")
 
-    st.divider()
-    if st.button("↺  Reset all filters", width="stretch"):
+    if st.button("↺ Reset all filters", width="stretch"):
         for k in FILTER_KEYS:
             st.session_state.pop(k, None)
         st.rerun()
