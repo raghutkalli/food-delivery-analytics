@@ -31,13 +31,11 @@ You'll land on your new (empty) repo page.
    - `app.py`
    - `analytics.py`
    - `data_gen.py`
-   - `db_loader.py`
    - `requirements.txt`
    - `README.md`
    - `.gitignore`
-   - No secrets file needed — the app asks for database credentials directly
-     in its sidebar each session, so there's nothing credential-related to
-     upload or configure in the repo at all.
+   - No secrets or credentials needed anywhere — the app runs entirely on
+     synthetic data, generated on the fly.
 3. Scroll down, add a commit message like "Initial dashboard upload," and click
    **"Commit changes"**.
 4. Confirm all files now appear in the repo's file listing.
@@ -82,40 +80,15 @@ That's it for GitHub — your code is hosted. Now connect it to Streamlit.
    ```
    (or whatever subdomain you chose, or an auto-generated one).
 
-At this point, the dashboard is live — running on the **synthetic fallback
-data**, since it doesn't have your DB credentials yet.
+At this point, the dashboard is fully live — synthetic data, all filters,
+all tabs, all charts. Nothing further to configure.
 
-At this point, the dashboard is live — running on **synthetic data that
-refreshes automatically once every 24 hours** (see Section 2 of this guide),
-since it isn't connected to your live database yet.
-
-### Step 7 — Connect to your live database (no Secrets setup needed)
-As of the current version, the app **no longer uses Streamlit's Secrets
-manager for the database** — instead it asks for your credentials directly
-in the running app, every session, and never stores them:
-1. Open your deployed app.
-2. In the sidebar, expand **"🔌 Connect to database"**.
-3. Enter your `Host`, `Port`, `Database name`, `Username`, `Password`
-   (find these in your phpMyAdmin server/connection details).
-4. Click **"🔗 Connect"**. On success, the sidebar status chip switches to
-   **"Live MySQL · your_database_name"**.
-5. If it fails, you'll see a specific connection error in the sidebar
-   (bad host, wrong password, etc.) rather than a silent fallback — fix the
-   field it points to and click Connect again.
-
-Because this is asked for every session rather than stored, closing the tab
-or letting the page's 24-hour auto-reload happen (Step 8) means you'll need
-to re-enter credentials next time — that's intentional, not a bug.
-
-### Step 8 — Confirm it's dynamic
-- The sidebar shows either **"Synthetic (auto-refreshes daily)"** or, once
-  connected, **"Live MySQL · ..."** with the connection time.
-- Click **"🔄 Refresh live data"** (once connected) to re-query the database
-  immediately and confirm the numbers reflect current DB state — or
-  **"🔄 Refresh synthetic data"** when not connected.
-- The whole page also auto-reloads every 24 hours on its own (a `<meta
-  refresh>` tag), which is what drives the daily synthetic-data refresh
-  automatically, without anyone needing to click anything.
+### Step 7 — Confirm it's working
+- The sidebar shows **"Synthetic (auto-refreshes daily)"** with a timestamp (IST).
+- Data auto-refreshes once every 24 hours on its own (date-seeded generator +
+  automatic page reload) — no clicking required.
+- Click **"🔄 Refresh synthetic data"** any time to force an immediate
+  refresh instead of waiting for the daily cycle.
 
 ---
 
@@ -145,7 +118,5 @@ to re-enter credentials next time — that's intentional, not a bug.
   dashboard's data volumes (a few thousand rows) are comfortably within that.
 - **Custom domains:** not available on the free tier — you get the
   `*.streamlit.app` subdomain, which is what you'll share.
-- **Security:** your GitHub repo can be public without exposing your DB
-  password — secrets live only in Streamlit Cloud's Secrets tab, never in the
-  repo itself (this is exactly why `app.py` reads credentials from
-  environment variables / `st.secrets` instead of having them hardcoded).
+- **Security:** nothing to worry about here — the app has no credentials or
+  secrets of any kind, since it runs entirely on synthetic data.

@@ -22,8 +22,9 @@ the new version immediately.
 1. Go to your repo on GitHub.
 2. Click **"Add file" → "Upload files"**.
 3. Drag in all the files from the new `streamlit_app/` folder — `app.py`,
-   `analytics.py`, `data_gen.py`, `db_loader.py`, `requirements.txt`,
-   `README.md`, `.gitignore`.
+   `analytics.py`, `data_gen.py`, `requirements.txt`,
+   `README.md`, `.gitignore`. (If your repo still has an old `db_loader.py`
+   from a previous version, delete it from GitHub too — it's no longer used.)
    - GitHub automatically detects that files with these names already exist
      and will show them as **modified** (not duplicated) in the commit preview.
 4. New files that didn't exist before (`HUGGINGFACE_DEPLOYMENT.md`,

@@ -1,7 +1,9 @@
 """
-Food Delivery Product Analytics — Live Dashboard
+Food Delivery Product Analytics — Dashboard (synthetic data)
 Deploy free on Streamlit Community Cloud (share.streamlit.io) or
 Hugging Face Spaces (huggingface.co/spaces) — this file works unchanged on either.
+No database required — runs entirely on a synthetic dataset that
+auto-refreshes once every 24 hours.
 """
 import datetime as dt
 from zoneinfo import ZoneInfo
@@ -13,7 +15,6 @@ from plotly.subplots import make_subplots
 
 from analytics import clean_data, compute_all_kpis, filter_data, get_filter_options
 from data_gen import generate_synthetic_data
-from db_loader import ensure_bool, load_from_database
 
 st.set_page_config(page_title="Food Delivery Analytics", layout="wide", page_icon="🍔", initial_sidebar_state="expanded")
 
@@ -153,12 +154,9 @@ def chart_card(fig, height=380):
 
 
 # ---------------------------------------------------------------------
-# Data loading
-#   - Synthetic fallback: cached, reseeded once every 24h so it's stable
-#     within a day and genuinely different the next (real automatic refresh).
-#   - Live DB: never auto-connects using stored secrets — credentials are
-#     always entered by the user in the sidebar form below, for this
-#     session only (never written to disk or persisted anywhere).
+# Data loading — synthetic only (no live database). Cached and reseeded
+# once every 24 hours so it's stable within a day and genuinely different
+# the next — a real automatic refresh, not just a fixed dataset.
 # ---------------------------------------------------------------------
 REFRESH_TTL_SECONDS = 86400  # 24 hours
 
@@ -169,24 +167,15 @@ def load_synthetic_data(day_seed: int):
     return clean_data(users, restaurants, riders, orders, events, nps)
 
 
-def _connect_to_database(host, port, database, user, password):
-    users, restaurants, riders, orders, events, nps = load_from_database(host, int(port), database, user, password)
-    users = ensure_bool(users, ["is_subscriber"])
-    orders = ensure_bool(orders, ["complaint_flag", "wrong_item_flag", "is_promo_used", "is_scheduled_order"])
-    return clean_data(users, restaurants, riders, orders, events, nps)
-
-
 # A full browser reload every 24h — combined with the daily-reseeded synthetic
 # cache above, this is what makes the "once every 24 hours" refresh actually
-# happen automatically, without anyone needing to click anything. It also
-# naturally clears any live DB session (session_state resets on a real page
-# reload), which is why the DB form below always asks for credentials again.
+# happen automatically, without anyone needing to click anything.
 st.markdown(f'<meta http-equiv="refresh" content="{REFRESH_TTL_SECONDS}">', unsafe_allow_html=True)
 
 TODAY_SEED = int(today_ist().strftime("%Y%m%d"))
 
 # ---------------------------------------------------------------------
-# Sidebar — branding + DB connection + filters
+# Sidebar — branding + filters
 # ---------------------------------------------------------------------
 FILTER_KEYS = ["flt_date", "flt_city", "flt_cuisine", "flt_channel", "flt_device", "flt_ab",
                "flt_gender", "flt_profession", "flt_income", "flt_agegroup"]
@@ -200,72 +189,22 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    with st.expander("🔌 Database connection", expanded=False):
-        st.caption("Used only for this session — never stored.")
-        r1c1, r1c2 = st.columns([3, 1])
-        db_host = r1c1.text_input("Host", key="db_host_input", placeholder="host.provider.com", label_visibility="collapsed")
-        db_port = r1c2.number_input("Port", value=3306, step=1, key="db_port_input", label_visibility="collapsed")
-        db_name = st.text_input("Database name", key="db_name_input", placeholder="Database name", label_visibility="collapsed")
-        r2c1, r2c2 = st.columns(2)
-        db_user = r2c1.text_input("Username", key="db_user_input", placeholder="Username", label_visibility="collapsed")
-        db_password = r2c2.text_input("Password", type="password", key="db_password_input", placeholder="Password", label_visibility="collapsed")
-        cc1, cc2 = st.columns(2)
-        connect_clicked = cc1.button("🔗 Connect", width="stretch")
-        disconnect_clicked = cc2.button("✖ Disconnect", width="stretch") if st.session_state.get("db_connected") else False
-
-    if connect_clicked:
-        try:
-            with st.spinner("Connecting..."):
-                cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
-            st.session_state["db_data"] = cleaned
-            st.session_state["db_connected"] = True
-            st.session_state["db_connected_at"] = now_ist()
-            st.session_state["db_label"] = f"Live MySQL · {db_name}"
-            st.rerun()
-        except Exception as e:
-            st.error(f"Connection failed: {type(e).__name__}: {e}")
-
-    if disconnect_clicked:
-        for k in ["db_data", "db_connected", "db_connected_at", "db_label"]:
-            st.session_state.pop(k, None)
+    if st.button("🔄 Refresh synthetic data", width="stretch", help="Forces an immediate refresh instead of waiting for the daily auto-refresh"):
+        load_synthetic_data.clear()
         st.rerun()
 
-    refresh_label = "🔄 Refresh live data" if st.session_state.get("db_connected") else "🔄 Refresh synthetic data"
-    if st.button(refresh_label, width="stretch"):
-        if st.session_state.get("db_connected"):
-            try:
-                with st.spinner("Refreshing..."):
-                    cleaned = _connect_to_database(db_host, db_port, db_name, db_user, db_password)
-                st.session_state["db_data"] = cleaned
-                st.session_state["db_connected_at"] = now_ist()
-            except Exception as e:
-                st.error(f"Refresh failed: {type(e).__name__}: {e}")
-        else:
-            load_synthetic_data.clear()
-        st.rerun()
-
-# ---------------------------------------------------------------------
-# Resolve active dataset: live DB (this session only) or synthetic fallback
-# ---------------------------------------------------------------------
-if st.session_state.get("db_connected"):
-    users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = st.session_state["db_data"]
-    data_source = st.session_state["db_label"]
-    last_loaded = st.session_state["db_connected_at"]
-else:
-    users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = load_synthetic_data(TODAY_SEED)
-    data_source = "Synthetic (auto-refreshes daily)"
-    last_loaded = dt.datetime.combine(today_ist(), dt.time(0, 0), tzinfo=IST)
+users_clean, orders_clean, events_clean, nps_clean, restaurants, riders = load_synthetic_data(TODAY_SEED)
+data_source = "Synthetic (auto-refreshes daily)"
+last_loaded = dt.datetime.combine(today_ist(), dt.time(0, 0), tzinfo=IST)
 
 opts = get_filter_options(orders_clean, users_clean, restaurants)
 
 with st.sidebar:
-    dot_color = PALETTE["teal"] if "Live" in data_source else PALETTE["amber"]
     st.markdown(
-        f'<div class="status-chip"><span class="dot" style="background:{dot_color};"></span>{data_source}</div>',
+        f'<div class="status-chip"><span class="dot" style="background:{PALETTE["teal"]};"></span>{data_source}</div>',
         unsafe_allow_html=True,
     )
-    short_time = last_loaded.strftime('%H:%M IST') if "Live" in data_source else f"as of {today_ist().strftime('%d %b')} IST"
-    st.caption(f"🕐 {short_time} · refreshes every {REFRESH_TTL_SECONDS//3600}h")
+    st.caption(f"🕐 as of {today_ist().strftime('%d %b')} IST · refreshes every {REFRESH_TTL_SECONDS//3600}h")
 
     st.markdown('<div class="filter-head" style="margin-top:8px;">🔍 Filters</div>', unsafe_allow_html=True)
 

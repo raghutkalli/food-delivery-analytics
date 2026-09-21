@@ -11,12 +11,11 @@ pinned: false
 
 # Food Delivery — Product Analytics Dashboard
 
-Live, interactive product-analytics dashboard for a food-delivery marketplace.
-Computes 50+ KPIs (acquisition, engagement, revenue, retention, operations,
-marketplace/supply, CLV modeling, RFM segmentation, cohort analysis,
-demographic segmentation, and an A/B testing framework) directly from a
-MySQL database, with a synthetic-data fallback so the app always runs even
-without DB access.
+Interactive product-analytics dashboard for a food-delivery marketplace,
+running entirely on synthetic data (no database required). Computes 50+ KPIs
+(acquisition, engagement, revenue, retention, operations, marketplace/supply,
+CLV modeling, RFM segmentation, cohort analysis, demographic segmentation,
+and an A/B testing framework).
 
 **Key features:**
 - Sidebar filters (date range, city, cuisine, channel, device, A/B group,
@@ -25,12 +24,9 @@ without DB access.
 - Demographic segmentation tab: GMV/AOV/user-count by gender, age group,
   profession, and income bracket, plus a two-factor Gender × Age Group
   GMV cross-tab heatmap.
-- Live database connection form in the sidebar — credentials are entered
-  each session and never stored, so there's nothing to configure in
-  Secrets for the database to work.
-- Synthetic fallback data auto-refreshes once every 24 hours (date-seeded
-  generator + automatic page reload), so the dashboard is never static
-  even without a live DB connection.
+- Synthetic data auto-refreshes once every 24 hours (date-seeded generator +
+  automatic page reload), so the dashboard is never static — or click
+  "🔄 Refresh synthetic data" in the sidebar to force an immediate refresh.
 - All timestamps shown in IST (Asia/Kolkata), regardless of the server's
   own clock/timezone.
 

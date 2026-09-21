@@ -1,30 +1,25 @@
-# Deploying the Dashboard — Free & Dynamic
+# Deploying the Dashboard — Free, Hosted on Streamlit Community Cloud
 
-This turns the dashboard from a static HTML snapshot into a **live web app** that
-re-queries your MySQL database on a schedule (and on demand), hosted at **zero cost**
-on [Streamlit Community Cloud](https://share.streamlit.io) — the standard free
-hosting option for this exact use case (Python + Streamlit apps, public GitHub repos).
+This turns the dashboard into a **live, hosted web app** at **zero cost** on
+[Streamlit Community Cloud](https://share.streamlit.io) — the standard free
+hosting option for Python + Streamlit apps backed by a public GitHub repo.
 
-## What "dynamic" means here
-- The app computes every KPI fresh from real data and renders the charts —
-  it isn't a pre-baked snapshot.
-- **Live database:** you connect by entering credentials directly in the
-  running app's sidebar (see Step 4) — every session, never stored. Once
-  connected, click **"🔄 Refresh live data"** any time to re-query immediately.
-- **Synthetic fallback:** used automatically whenever you haven't connected
-  to a database. It refreshes itself **once every 24 hours** on its own (the
-  page auto-reloads via a `<meta refresh>` tag, and the synthetic dataset is
-  reseeded by the current date) — no clicking required.
-- Either way, the dashboard never shows a broken page: connection failures
-  show a clear sidebar error and the app keeps running on synthetic data.
+## How the data works
+- The app runs entirely on **synthetic data** — no database, no external
+  connection, nothing to configure.
+- Every KPI and chart is computed fresh from that data on each page load —
+  it isn't a pre-baked static snapshot.
+- Data **auto-refreshes once every 24 hours** (a date-seeded generator plus
+  an automatic page reload) — stable all day, genuinely different the next.
+- Click **"🔄 Refresh synthetic data"** in the sidebar any time to force an
+  immediate refresh instead of waiting for the daily cycle.
 
 ## Files in this folder
 | File | Purpose |
 |---|---|
-| `app.py` | The Streamlit app (UI, layout, charts, DB connection form) |
-| `analytics.py` | Cleaning + all KPI calculations (pure functions, reused from the notebook) |
-| `data_gen.py` | Synthetic-data fallback generator (date-seeded for the daily refresh) |
-| `db_loader.py` | Live MySQL connection via SQLAlchemy + PyMySQL |
+| `app.py` | The Streamlit app (UI, layout, charts, filters) |
+| `analytics.py` | Cleaning + all KPI calculations (pure functions) |
+| `data_gen.py` | Synthetic-data generator |
 | `requirements.txt` | Dependencies Streamlit Cloud will install |
 
 ## Step 1 — Put this folder in a GitHub repo
@@ -33,9 +28,7 @@ hosting option for this exact use case (Python + Streamlit apps, public GitHub r
 3. Upload all the files in this folder to that repo — keep them at the repo root
    (or note the subfolder path, you'll need it in Step 2).
    - Easiest: drag-and-drop all files via the GitHub web UI ("Add file" → "Upload files").
-   - No secrets to worry about here — the app never reads DB credentials from
-     the repo, environment variables, or Streamlit secrets; they're entered
-     live in the app itself (Step 4).
+   - No secrets or credentials to worry about anywhere in this setup.
 
 ## Step 2 — Sign up for Streamlit Community Cloud
 1. Go to https://share.streamlit.io and sign in with your GitHub account (free).
@@ -51,20 +44,8 @@ starts the app. First deploy takes 1–3 minutes. You'll get a public URL like:
 https://your-app-name.streamlit.app
 ```
 
-At this point the app is live and working — using the auto-refreshing
-synthetic data, since you haven't connected to your database yet.
-
-## Step 4 — Connect to your live database
-1. Open your deployed app.
-2. In the sidebar, expand **"🔌 Connect to database"**.
-3. Enter `Host`, `Port`, `Database name`, `Username`, `Password` — find these
-   in your phpMyAdmin "Server" / connection details.
-4. Click **"🔗 Connect"**. The sidebar status chip switches to
-   **"Live MySQL · your_database_name"** on success, or shows a specific
-   error message if the connection fails.
-
-Since credentials are never stored, reloading the page (including the
-automatic 24-hour reload) will ask you to connect again — that's intentional.
+The app is immediately live and fully working — synthetic data, all filters,
+all tabs, all charts. Nothing further to configure.
 
 ## Keeping it updated
 Any time you push a change to the GitHub repo, Streamlit Cloud **automatically
@@ -74,9 +55,6 @@ lives in `analytics.py` / `app.py`, so edits there show up on next push.
 ## Cost & limits (free tier, as of this writing)
 - Streamlit Community Cloud: free for public apps, one active app can sleep after
   inactivity and wake on next visit (a few seconds' delay) — no cost involved.
-- Your MySQL host (phpMyAdmin/`sql12834948`) — whatever plan you already have;
-  this app just runs `SELECT` queries against it, no extra database cost incurred
-  by hosting the dashboard itself.
 - If you outgrow the free tier or want guaranteed uptime, the next steps up are a
   paid Streamlit Cloud plan, or self-hosting the same `app.py` on a free-tier VM
   (Render, Railway, Fly.io) — the code doesn't change, only where it runs.
@@ -85,5 +63,4 @@ lives in `analytics.py` / `app.py`, so edits there show up on next push.
 If you'd rather not use GitHub + Streamlit Cloud, [Hugging Face Spaces](https://huggingface.co/spaces)
 supports Streamlit apps natively and is also free — see `HUGGINGFACE_DEPLOYMENT.md`
 in this same folder for the full walkthrough. `app.py` works unchanged on
-either platform — the database connection form works the same way regardless
-of where it's hosted.
+either platform.
